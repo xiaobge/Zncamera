@@ -6,8 +6,9 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, View, TouchableOpacity, Text, Alert } from 'react-native';
+import { StyleSheet, View, TouchableOpacity, Text, Alert, Platform, Linking } from 'react-native';
 import { Camera, useCameraDevice } from 'react-native-vision-camera';
+import RNFS from 'react-native-fs';
 
 export default function App() {
   // 相机引用
@@ -19,18 +20,55 @@ export default function App() {
   // 录制状态
   const [isRecording, setIsRecording] = useState(false);
 
-  // 请求权限
-  useEffect(() => {
-    (async () => {
-      const cameraPermission = await Camera.requestCameraPermission();
-      const microphonePermission = await Camera.requestMicrophonePermission();
-      setHasPermission(
-        cameraPermission === 'granted' && microphonePermission === 'granted'
+  // 检查权限状态
+  const checkPermissions = async () => {
+    try {
+      // 检查相机权限
+      let cameraStatus = await Camera.getCameraPermissionStatus();
+      if (cameraStatus !== 'granted') {
+        cameraStatus = await Camera.requestCameraPermission();
+      }
+
+      // 检查麦克风权限
+      let microphoneStatus = await Camera.getMicrophonePermissionStatus();
+      if (microphoneStatus !== 'granted') {
+        microphoneStatus = await Camera.requestMicrophonePermission();
+      }
+
+      // 设置权限状态
+      const hasAllPermissions = (
+        cameraStatus === 'granted' && 
+        microphoneStatus === 'granted'
       );
-    })();
+
+      console.log('权限状态:', {
+        camera: cameraStatus,
+        microphone: microphoneStatus,
+        hasAll: hasAllPermissions
+      });
+
+      setHasPermission(hasAllPermissions);
+    } catch (error) {
+      console.error('权限检查错误:', error);
+      setHasPermission(false);
+    }
+  };
+
+  // 在组件挂载时检查权限
+  useEffect(() => {
+    checkPermissions();
   }, []);
 
-  // 拍照功能
+  // 添加打开设置的功能
+  const openSettings = async () => {
+    try {
+      await Linking.openSettings();
+    } catch (error) {
+      console.error('打开设置失败:', error);
+    }
+  };
+
+  // 修改拍照功能
   const takePhoto = async () => {
     try {
       const photo = await camera.current?.takePhoto({
@@ -38,9 +76,29 @@ export default function App() {
         flash: 'auto',
         enableAutoRedEyeReduction: true,
       });
-      Alert.alert('成功', `照片已保存到: ${photo?.path}`);
+      
+      if (photo?.path) {
+        // 获取相册目录
+        const galleryPath = `${RNFS.PicturesDirectoryPath}/Camera`;
+        
+        // 确保目录存在
+        await RNFS.mkdir(galleryPath);
+        
+        // 生成目标文件名
+        const fileName = `IMG_${new Date().getTime()}.jpg`;
+        const destPath = `${galleryPath}/${fileName}`;
+        
+        // 复制文件到相册
+        await RNFS.copyFile(photo.path, destPath);
+        
+        // 通知媒体扫描器更新相册
+        await RNFS.scanFile(destPath);
+        
+        Alert.alert('成功', '照片已保存到相册');
+      }
     } catch (e) {
-      Alert.alert('错误', '拍照失败');
+      console.error(e);
+      Alert.alert('错误', '保存照片失败');
     }
   };
 
@@ -84,7 +142,16 @@ export default function App() {
   if (!hasPermission) {
     return (
       <View style={styles.container}>
-        <Text>需要相机和麦克风权限</Text>
+        <Text style={styles.permissionText}>
+          需要以下权限才能使用相机功能：{'\n\n'}
+          • 相机权限 - 用于拍照和录像{'\n'}
+          • 麦克风权限 - 用于录制声音{'\n'}
+          • 存储权限 - 用于保存照片和视频到相册{'\n\n'}
+          请在设置中开启这些权限
+        </Text>
+        <TouchableOpacity style={styles.settingsButton} onPress={openSettings}>
+          <Text style={styles.settingsButtonText}>打开设置</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -108,8 +175,12 @@ export default function App() {
         video={true}
         audio={true}
         enableZoomGesture={true}
-        onFrameProcessed={onFrameCapture}  // 添加帧处理回调
+        onFrameProcessed={onFrameCapture}
       />
+      
+      {/* 添加红圈 */}
+      <View style={styles.redCircle} />
+
       <View style={styles.buttonContainer}>
         <TouchableOpacity style={styles.button} onPress={takePhoto}>
           <Text style={styles.buttonText}>拍照</Text>
@@ -153,5 +224,36 @@ const styles = StyleSheet.create({
   buttonText: {
     color: 'black',
     fontSize: 16,
+  },
+  // 添加红圈样式
+  redCircle: {
+    position: 'absolute',
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    borderWidth: 2,
+    borderColor: 'red',
+    top: '50%',
+    left: '50%',
+    marginTop: -50,  // 负的高度的一半
+    marginLeft: -50, // 负的宽度的一半
+  },
+  permissionText: {
+    padding: 20,
+    fontSize: 16,
+    textAlign: 'center',
+    color: '#666',
+  },
+  settingsButton: {
+    backgroundColor: '#007AFF',
+    padding: 15,
+    borderRadius: 10,
+    marginTop: 20,
+    marginHorizontal: 40,
+  },
+  settingsButtonText: {
+    color: 'white',
+    fontSize: 16,
+    textAlign: 'center',
   },
 });
